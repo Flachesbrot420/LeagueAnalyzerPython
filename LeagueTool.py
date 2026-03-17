@@ -6,37 +6,9 @@ from dotenv import load_dotenv
 from sqlalchemy import create_engine, Column, Integer, String, ForeignKey, BigInteger, JSON, Boolean
 from sqlalchemy.orm import sessionmaker, declarative_base, relationship
 
-# ── ENV & DB Setup ────────────────────────────────────────────────────────────
-
 load_dotenv(dotenv_path=Path(__file__).parent / ".env")
 
-engine    = create_engine('sqlite:///C:/Users/offic/OneDrive/Dokumente/SpeiseUndGetraenkeKarten/_MittagsMenue/2024/Anlagen/Desktop/LeagueAnalyzerPython/db/LeagueToolDb.db')
-Session   = sessionmaker(bind=engine)
-DBSession = Session()
-Base      = declarative_base()
-
-# ── Riot API Setup ────────────────────────────────────────────────────────────
-
-HEADERS    = {"X-Riot-Token": os.getenv("RIOT_API_KEY")}
-BASE_URL   = "https://europe.api.riotgames.com"
-REGION_URL = "https://euw1.api.riotgames.com"
-
-# ── API Functions ─────────────────────────────────────────────────────────────
-
-def get_account_by_riot_id(game_name: str, tag_line: str):
-    return requests.get(f"{BASE_URL}/riot/account/v1/accounts/by-riot-id/{game_name}/{tag_line}", headers=HEADERS).json()
-
-def get_match_ids_by_puuid(puuid: str, count: int = 20):
-    return requests.get(f"{BASE_URL}/lol/match/v5/matches/by-puuid/{puuid}/ids", headers=HEADERS, params={"count": count}).json()
-
-def get_match(match_id: str):
-    return requests.get(f"{BASE_URL}/lol/match/v5/matches/{match_id}", headers=HEADERS).json()
-
-def get_match_timeline(match_id: str):
-    return requests.get(f"{BASE_URL}/lol/match/v5/matches/{match_id}/timeline", headers=HEADERS).json()
-
-def get_league_entries_by_puuid(puuid: str):
-    return requests.get(f"{REGION_URL}/lol/league/v4/entries/by-puuid/{puuid}", headers=HEADERS).json()
+Base = declarative_base()
 
 # ── Entities ──────────────────────────────────────────────────────────────────
 
@@ -414,165 +386,372 @@ class MiniSeriesDTO(Base):
     wins     = Column(Integer)
     league_entry = relationship('LeagueEntryDTO', back_populates='mini_series', uselist=False)
 
-# ── Create Tables ─────────────────────────────────────────────────────────────
 
-Base.metadata.create_all(engine)
+# ── Riot API Client ───────────────────────────────────────────────────────────
 
-# ── Save Functions ────────────────────────────────────────────────────────────
+class RiotApiClient:
+    """Handles all communication with the Riot API."""
 
-def save_account(game_name: str, tag_line: str) -> AccountDto:
-    data = get_account_by_riot_id(game_name, tag_line)
-    account = AccountDto(puuid=data['puuid'])
-    DBSession.add(account)
-    DBSession.commit()
-    print(f"[+] Account saved: {game_name}#{tag_line}")
-    return account
+    def __init__(self, api_key: str, base_url: str = "https://europe.api.riotgames.com", region_url: str = "https://euw1.api.riotgames.com"):
+        self.headers    = {"X-Riot-Token": api_key}
+        self.base_url   = base_url
+        self.region_url = region_url
 
-def save_match_ids(puuid: str) -> list:
-    ids = get_match_ids_by_puuid(puuid)
-    for match_id in ids:
-        DBSession.add(MatchIdDto(puuid=puuid, matchId=match_id))
-    DBSession.commit()
-    print(f"[+] {len(ids)} match IDs saved")
-    return ids
+    def _get(self, url: str, params: dict = None) -> dict:
+        response = requests.get(url, headers=self.headers, params=params)
+        response.raise_for_status()
+        return response.json()
 
-def save_match(match_id: str):
-    data     = get_match(match_id)
-    meta_raw = data['metadata']
-    info_raw = data['info']
+    def get_account(self, game_name: str, tag_line: str) -> dict:
+        return self._get(f"{self.base_url}/riot/account/v1/accounts/by-riot-id/{game_name}/{tag_line}")
 
-    meta = MatchMetadataDto(dataVersion=meta_raw['dataVersion'], matchId=meta_raw['matchId'], participants=meta_raw['participants'])
-    DBSession.add(meta)
-    DBSession.flush()
+    def get_match_ids(self, puuid: str, count: int = 20) -> list:
+        return self._get(f"{self.base_url}/lol/match/v5/matches/by-puuid/{puuid}/ids", params={"count": count})
 
-    info = MatchInfoDto(
-        endOfGameResult=info_raw.get('endOfGameResult'),
-        gameCreation=info_raw.get('gameCreation'), gameDuration=info_raw.get('gameDuration'),
-        gameEndTimestamp=info_raw.get('gameEndTimestamp'), gameId=info_raw.get('gameId'),
-        gameMode=info_raw.get('gameMode'), gameName=info_raw.get('gameName'),
-        gameStartTimestamp=info_raw.get('gameStartTimestamp'), gameType=info_raw.get('gameType'),
-        gameVersion=info_raw.get('gameVersion'), mapId=info_raw.get('mapId'),
-        platformId=info_raw.get('platformId'), queueId=info_raw.get('queueId'),
-        tournamentCode=info_raw.get('tournamentCode')
-    )
-    DBSession.add(info)
-    DBSession.flush()
+    def get_match(self, match_id: str) -> dict:
+        return self._get(f"{self.base_url}/lol/match/v5/matches/{match_id}")
 
-    for p in info_raw.get('participants', []):
-        participant = ParticipantDto(**{
-            k: p.get(k) for k in ParticipantDto.__table__.columns.keys()
-            if k not in ('id', 'info_id')
-        })
-        participant.info_id = info.id
-        DBSession.add(participant)
+    def get_match_timeline(self, match_id: str) -> dict:
+        return self._get(f"{self.base_url}/lol/match/v5/matches/{match_id}/timeline")
 
-    for t in info_raw.get('teams', []):
-        obj_raw = t.get('objectives', {})
-        def make_obj(key):
-            o = obj_raw.get(key, {})
-            obj = ObjectiveDto(first=o.get('first'), kills=o.get('kills'))
-            DBSession.add(obj)
-            DBSession.flush()
-            return obj.id
-        objectives = ObjectivesDto(
-            baron_id=make_obj('baron'), champion_id=make_obj('champion'),
-            dragon_id=make_obj('dragon'), horde_id=make_obj('horde'),
-            inhibitor_id=make_obj('inhibitor'), riftHerald_id=make_obj('riftHerald'),
-            tower_id=make_obj('tower')
-        )
-        DBSession.add(objectives)
-        DBSession.flush()
-        team = TeamDto(info_id=info.id, objectives_id=objectives.id, teamId=t.get('teamId'), win=t.get('win'))
-        DBSession.add(team)
-        DBSession.flush()
-        for ban in t.get('bans', []):
-            DBSession.add(BanDto(team_id=team.id, championId=ban.get('championId'), pickTurn=ban.get('pickTurn')))
+    def get_league_entries(self, puuid: str) -> list:
+        return self._get(f"{self.region_url}/lol/league/v4/entries/by-puuid/{puuid}")
 
-    DBSession.commit()
-    print(f"[+] Match saved: {match_id}")
 
-def save_timeline(match_id: str):
-    data     = get_match_timeline(match_id)
-    meta_raw = data['metadata']
-    info_raw = data['info']
+# ── Database Manager ──────────────────────────────────────────────────────────
 
-    meta = MetadataTimeLineDto(dataVersion=meta_raw['dataVersion'], matchId=meta_raw['matchId'], participants=meta_raw['participants'])
-    DBSession.add(meta)
-    DBSession.flush()
+class DatabaseManager:
+    """
+    Handles all database operations.
 
-    info = InfoTimeLineDto(endOfGameResult=info_raw.get('endOfGameResult'), frameInterval=info_raw.get('frameInterval'), gameId=info_raw.get('gameId'))
-    DBSession.add(info)
-    DBSession.flush()
+    By default we keep existing data. Set AMADEUS_CLEAR_DB=true (or pass clear_on_init=True)
+    to wipe tables on startup for a fresh run.
+    """
 
-    DBSession.add(TimelineDto(meta_id=meta.id, info_id=info.id))
-    for p in info_raw.get('participants', []):
-        DBSession.add(ParticipantTimeLineDto(info_id=info.id, participantId=p.get('participantId'), puuid=p.get('puuid')))
+    TABLES_TO_CLEAR = [
+        'participant_frame', 'champion_stats', 'damage_stats', 'position',
+        'participant_frames', 'events_timeline', 'frames_timeline',
+        'participant_timeline', 'info_timeline', 'metadata_timeline', 'timeline',
+        'match_ban', 'match_objective', 'match_objectives', 'match_team',
+        'match_participant', 'match_info', 'match_metadata', 'match_id',
+        'league_entry', 'mini_series', 'account'
+    ]
 
-    for frame_raw in info_raw.get('frames', []):
-        frame = FramesTimeLineDto(info_id=info.id, timestamp=frame_raw.get('timestamp'))
-        DBSession.add(frame)
-        DBSession.flush()
-        for event in frame_raw.get('events', []):
-            DBSession.add(EventsTimeLineDto(frame_id=frame.id, timestamp=event.get('timestamp'), realTimestamp=event.get('realTimestamp'), type=event.get('type')))
-        pf_container = ParticipantFramesDto(frame_id=frame.id)
-        DBSession.add(pf_container)
-        DBSession.flush()
-        for _, pf in frame_raw.get('participantFrames', {}).items():
-            cs = ChampionStatsDto(**{k: pf.get('championStats', {}).get(k) for k in ChampionStatsDto.__table__.columns.keys() if k != 'id'})
-            DBSession.add(cs)
-            DBSession.flush()
-            ds = DamageStatsDto(**{k: pf.get('damageStats', {}).get(k) for k in DamageStatsDto.__table__.columns.keys() if k != 'id'})
-            DBSession.add(ds)
-            DBSession.flush()
-            pos = PositionDto(x=pf.get('position', {}).get('x'), y=pf.get('position', {}).get('y'))
-            DBSession.add(pos)
-            DBSession.flush()
-            DBSession.add(ParticipantFrameDto(
-                participant_frames_id=pf_container.id, champion_stats_id=cs.id,
-                damage_stats_id=ds.id, position_id=pos.id,
-                currentGold=pf.get('currentGold'), goldPerSecond=pf.get('goldPerSecond'),
-                jungleMinionsKilled=pf.get('jungleMinionsKilled'), level=pf.get('level'),
-                minionsKilled=pf.get('minionsKilled'), participantId=pf.get('participantId'),
-                timeEnemySpentControlled=pf.get('timeEnemySpentControlled'),
-                totalGold=pf.get('totalGold'), xp=pf.get('xp')
-            ))
+    def __init__(self, db_url: str, clear_on_init: bool | None = None):
+        if clear_on_init is None:
+            flag = os.getenv("AMADEUS_CLEAR_DB", "false").lower()
+            clear_on_init = flag in ("1", "true", "yes", "y")
+        self.clear_on_init = clear_on_init
 
-    DBSession.commit()
-    print(f"[+] Timeline saved: {match_id}")
+        self.engine  = create_engine(db_url)
+        self.Session = sessionmaker(bind=self.engine)
+        Base.metadata.create_all(self.engine)
 
-def save_league_entries(puuid: str):
-    for e in get_league_entries_by_puuid(puuid):
-        mini_series = None
-        if 'miniSeries' in e:
-            ms = e['miniSeries']
-            mini_series = MiniSeriesDTO(losses=ms.get('losses'), progress=ms.get('progress'), target=ms.get('target'), wins=ms.get('wins'))
-            DBSession.add(mini_series)
-            DBSession.flush()
-        DBSession.add(LeagueEntryDTO(
-            leagueId=e.get('leagueId'), puuid=e.get('puuid'), queueType=e.get('queueType'),
-            tier=e.get('tier'), rank=e.get('rank'), leaguePoints=e.get('leaguePoints'),
-            wins=e.get('wins'), losses=e.get('losses'), hotStreak=e.get('hotStreak'),
-            veteran=e.get('veteran'), freshBlood=e.get('freshBlood'), inactive=e.get('inactive'),
-            mini_series_id=mini_series.id if mini_series else None
-        ))
-    DBSession.commit()
-    print(f"[+] League entries saved for: {puuid}")
+        if self.clear_on_init:
+            self._clear_all()
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+    def _clear_all(self):
+        """Wipe all data so reruns start fresh."""
+        # Drop and recreate all tables to ensure full cleanup (handles FK ordering).
+        Base.metadata.drop_all(self.engine)
+        Base.metadata.create_all(self.engine)
+        print("[~] Database dropped and recreated — ready for fresh run.")
+
+    def save_account(self, data: dict) -> AccountDto:
+        with self.Session() as session:
+            account = AccountDto(puuid=data['puuid'])
+            session.add(account)
+            session.commit()
+            session.refresh(account)
+            print(f"[+] Account saved: puuid={account.puuid[:8]}...")
+            return account
+
+    def save_match_ids(self, puuid: str, ids: list):
+        with self.Session() as session:
+            for match_id in ids:
+                exists = session.query(MatchIdDto.id).filter_by(puuid=puuid, matchId=match_id).first()
+                if exists:
+                    continue
+                session.add(MatchIdDto(puuid=puuid, matchId=match_id))
+            session.commit()
+        print(f"[+] Match IDs processed: {len(ids)} (new: {session.query(MatchIdDto).filter_by(puuid=puuid).count()})")
+
+    def match_exists(self, match_id: str) -> bool:
+        with self.Session() as session:
+            return session.query(MatchMetadataDto.id).filter_by(matchId=match_id).first() is not None
+
+    def timeline_exists(self, match_id: str) -> bool:
+        with self.Session() as session:
+            return session.query(MetadataTimeLineDto.id).filter_by(matchId=match_id).first() is not None
+
+    def save_match(self, match_id: str, data: dict):
+        meta_raw = data['metadata']
+        info_raw = data['info']
+
+        with self.Session() as session:
+            # Skip if this match already exists
+            if session.query(MatchMetadataDto.id).filter_by(matchId=match_id).first():
+                print(f"[=] Match already stored: {match_id}")
+                return
+
+            meta = MatchMetadataDto(
+                dataVersion=meta_raw['dataVersion'],
+                matchId=meta_raw['matchId'],
+                participants=meta_raw['participants']
+            )
+            session.add(meta)
+            session.flush()
+
+            info = MatchInfoDto(
+                endOfGameResult=info_raw.get('endOfGameResult'),
+                gameCreation=info_raw.get('gameCreation'),
+                gameDuration=info_raw.get('gameDuration'),
+                gameEndTimestamp=info_raw.get('gameEndTimestamp'),
+                gameId=info_raw.get('gameId'),
+                gameMode=info_raw.get('gameMode'),
+                gameName=info_raw.get('gameName'),
+                gameStartTimestamp=info_raw.get('gameStartTimestamp'),
+                gameType=info_raw.get('gameType'),
+                gameVersion=info_raw.get('gameVersion'),
+                mapId=info_raw.get('mapId'),
+                platformId=info_raw.get('platformId'),
+                queueId=info_raw.get('queueId'),
+                tournamentCode=info_raw.get('tournamentCode')
+            )
+            session.add(info)
+            session.flush()
+
+            for p in info_raw.get('participants', []):
+                participant = ParticipantDto(**{
+                    k: p.get(k) for k in ParticipantDto.__table__.columns.keys()
+                    if k not in ('id', 'info_id')
+                })
+                participant.info_id = info.id
+                session.add(participant)
+
+            for t in info_raw.get('teams', []):
+                obj_raw = t.get('objectives', {})
+
+                def make_obj(key):
+                    o = obj_raw.get(key, {})
+                    obj = ObjectiveDto(first=o.get('first'), kills=o.get('kills'))
+                    session.add(obj)
+                    session.flush()
+                    return obj.id
+
+                objectives = ObjectivesDto(
+                    baron_id=make_obj('baron'),
+                    champion_id=make_obj('champion'),
+                    dragon_id=make_obj('dragon'),
+                    horde_id=make_obj('horde'),
+                    inhibitor_id=make_obj('inhibitor'),
+                    riftHerald_id=make_obj('riftHerald'),
+                    tower_id=make_obj('tower')
+                )
+                session.add(objectives)
+                session.flush()
+
+                team = TeamDto(
+                    info_id=info.id,
+                    objectives_id=objectives.id,
+                    teamId=t.get('teamId'),
+                    win=t.get('win')
+                )
+                session.add(team)
+                session.flush()
+
+                for ban in t.get('bans', []):
+                    session.add(BanDto(
+                        team_id=team.id,
+                        championId=ban.get('championId'),
+                        pickTurn=ban.get('pickTurn')
+                    ))
+
+            session.commit()
+        print(f"[+] Match saved: {match_id}")
+
+    def save_timeline(self, match_id: str, data: dict):
+        meta_raw = data['metadata']
+        info_raw = data['info']
+
+        with self.Session() as session:
+            # Skip if timeline for this match already exists
+            if session.query(MetadataTimeLineDto.id).filter_by(matchId=match_id).first():
+                print(f"[=] Timeline already stored: {match_id}")
+                return
+
+            meta = MetadataTimeLineDto(
+                dataVersion=meta_raw['dataVersion'],
+                matchId=meta_raw['matchId'],
+                participants=meta_raw['participants']
+            )
+            session.add(meta)
+            session.flush()
+
+            info = InfoTimeLineDto(
+                endOfGameResult=info_raw.get('endOfGameResult'),
+                frameInterval=info_raw.get('frameInterval'),
+                gameId=info_raw.get('gameId')
+            )
+            session.add(info)
+            session.flush()
+
+            session.add(TimelineDto(meta_id=meta.id, info_id=info.id))
+
+            for p in info_raw.get('participants', []):
+                session.add(ParticipantTimeLineDto(
+                    info_id=info.id,
+                    participantId=p.get('participantId'),
+                    puuid=p.get('puuid')
+                ))
+
+            for frame_raw in info_raw.get('frames', []):
+                frame = FramesTimeLineDto(info_id=info.id, timestamp=frame_raw.get('timestamp'))
+                session.add(frame)
+                session.flush()
+
+                for event in frame_raw.get('events', []):
+                    session.add(EventsTimeLineDto(
+                        frame_id=frame.id,
+                        timestamp=event.get('timestamp'),
+                        realTimestamp=event.get('realTimestamp'),
+                        type=event.get('type')
+                    ))
+
+                pf_container = ParticipantFramesDto(frame_id=frame.id)
+                session.add(pf_container)
+                session.flush()
+
+                for _, pf in frame_raw.get('participantFrames', {}).items():
+                    cs = ChampionStatsDto(**{
+                        k: pf.get('championStats', {}).get(k)
+                        for k in ChampionStatsDto.__table__.columns.keys() if k != 'id'
+                    })
+                    session.add(cs)
+                    session.flush()
+
+                    ds = DamageStatsDto(**{
+                        k: pf.get('damageStats', {}).get(k)
+                        for k in DamageStatsDto.__table__.columns.keys() if k != 'id'
+                    })
+                    session.add(ds)
+                    session.flush()
+
+                    pos = PositionDto(
+                        x=pf.get('position', {}).get('x'),
+                        y=pf.get('position', {}).get('y')
+                    )
+                    session.add(pos)
+                    session.flush()
+
+                    session.add(ParticipantFrameDto(
+                        participant_frames_id=pf_container.id,
+                        champion_stats_id=cs.id,
+                        damage_stats_id=ds.id,
+                        position_id=pos.id,
+                        currentGold=pf.get('currentGold'),
+                        goldPerSecond=pf.get('goldPerSecond'),
+                        jungleMinionsKilled=pf.get('jungleMinionsKilled'),
+                        level=pf.get('level'),
+                        minionsKilled=pf.get('minionsKilled'),
+                        participantId=pf.get('participantId'),
+                        timeEnemySpentControlled=pf.get('timeEnemySpentControlled'),
+                        totalGold=pf.get('totalGold'),
+                        xp=pf.get('xp')
+                    ))
+
+            session.commit()
+        print(f"[+] Timeline saved: {match_id}")
+
+    def save_league_entries(self, entries: list):
+        with self.Session() as session:
+            # Replace existing league entries with the latest snapshot.
+            session.query(LeagueEntryDTO).delete()
+            session.query(MiniSeriesDTO).delete()
+            for e in entries:
+                mini_series = None
+                if 'miniSeries' in e:
+                    ms = e['miniSeries']
+                    mini_series = MiniSeriesDTO(
+                        losses=ms.get('losses'),
+                        progress=ms.get('progress'),
+                        target=ms.get('target'),
+                        wins=ms.get('wins')
+                    )
+                    session.add(mini_series)
+                    session.flush()
+
+                session.add(LeagueEntryDTO(
+                    leagueId=e.get('leagueId'),
+                    puuid=e.get('puuid'),
+                    queueType=e.get('queueType'),
+                    tier=e.get('tier'),
+                    rank=e.get('rank'),
+                    leaguePoints=e.get('leaguePoints'),
+                    wins=e.get('wins'),
+                    losses=e.get('losses'),
+                    hotStreak=e.get('hotStreak'),
+                    veteran=e.get('veteran'),
+                    freshBlood=e.get('freshBlood'),
+                    inactive=e.get('inactive'),
+                    mini_series_id=mini_series.id if mini_series else None
+                ))
+            session.commit()
+        print(f"[+] League entries saved.")
+
+
+# ── Amadeus Pipeline ──────────────────────────────────────────────────────────
+
+class AmadeusPipeline:
+    """Orchestrates the full data ingestion flow."""
+
+    def __init__(self, api_client: RiotApiClient, db_manager: DatabaseManager, rate_limit_sleep: float = 1.5):
+        self.api = api_client
+        self.db  = db_manager
+        self.rate_limit_sleep = rate_limit_sleep
+
+    def run(self, game_name: str, tag_line: str, match_count: int = 20):
+        print(f"\n[Amadeus] Starting pipeline for {game_name}#{tag_line}\n")
+
+        account_data = self.api.get_account(game_name, tag_line)
+        account      = self.db.save_account(account_data)
+        puuid        = account.puuid
+
+        match_ids = self.api.get_match_ids(puuid, count=match_count)
+        self.db.save_match_ids(puuid, match_ids)
+
+        for i, match_id in enumerate(match_ids):
+            print(f"[{i+1}/{len(match_ids)}] Processing {match_id}...")
+            need_match    = not self.db.match_exists(match_id)
+            need_timeline = not self.db.timeline_exists(match_id)
+
+            if not need_match and not need_timeline:
+                print(f"[=] Skipping {match_id} (already stored)")
+                continue
+
+            if need_match:
+                self.db.save_match(match_id, self.api.get_match(match_id))
+            if need_timeline:
+                self.db.save_timeline(match_id, self.api.get_match_timeline(match_id))
+
+            time.sleep(self.rate_limit_sleep)
+
+        self.db.save_league_entries(self.api.get_league_entries(puuid))
+
+        print("\n[Amadeus] ✓ Pipeline complete!")
+
+
+# ── Entry Point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    DB_URL    = "sqlite:///C:/Users/offic/OneDrive/Dokumente/SpeiseUndGetraenkeKarten/_MittagsMenue/2024/Anlagen/Desktop/LeagueAnalyzerPython/db/LeagueToolDb.db"
+    API_KEY   = os.getenv("RIOT_API_KEY")
     GAME_NAME = "Zai"
     TAG_LINE  = "Wins"
+    CLEAR_DB  = os.getenv("AMADEUS_CLEAR_DB", "false").lower() in ("1", "true", "yes", "y")
 
-    account   = save_account(GAME_NAME, TAG_LINE)
-    puuid     = account.puuid
-    match_ids = save_match_ids(puuid)
+    api = RiotApiClient(api_key=API_KEY)
+    db  = DatabaseManager(db_url=DB_URL, clear_on_init=CLEAR_DB)
 
-    for i, match_id in enumerate(match_ids):
-        print(f"[{i+1}/{len(match_ids)}] Processing {match_id}...")
-        save_match(match_id)
-        save_timeline(match_id)
-        time.sleep(1.5)
-
-    save_league_entries(puuid)
-    print("\n[✓] Full flow complete!")
+    pipeline = AmadeusPipeline(api_client=api, db_manager=db)
+    pipeline.run(game_name=GAME_NAME, tag_line=TAG_LINE)

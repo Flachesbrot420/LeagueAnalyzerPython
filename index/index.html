@@ -1,0 +1,789 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Amadeus</title>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:       #080a0f;
+    --surface:  #0d1117;
+    --border:   #1c2333;
+    --accent:   #c89b3c;
+    --accent2:  #0bc4e3;
+    --red:      #e84057;
+    --green:    #38d978;
+    --text:     #cdd1d8;
+    --muted:    #4a5568;
+    --gold:     #c89b3c;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Rajdhani', sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Animated background grid */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(200,155,60,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(200,155,60,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .container { max-width: 1400px; margin: 0 auto; padding: 0 24px; position: relative; z-index: 1; }
+
+  /* Control Panel */
+  .control-panel {
+    margin: 24px 0 12px;
+    padding: 18px 20px;
+    border: 1px solid var(--border);
+    background: linear-gradient(135deg, rgba(11,196,227,0.05) 0%, rgba(13,17,23,0.9) 70%);
+    display: grid;
+    grid-template-columns: 1.4fr 1fr;
+    gap: 16px;
+  }
+  .control-panel h2 {
+    font-size: 14px;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 12px;
+  }
+  .run-form {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr) 140px;
+    gap: 10px;
+    align-items: end;
+  }
+  .form-field label {
+    font-size: 11px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--muted);
+    display: block;
+    margin-bottom: 6px;
+  }
+  .form-field input, .form-field select {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    background: #0c1018;
+    color: var(--text);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 13px;
+    outline: none;
+  }
+  .btn {
+    display: inline-flex;
+    justify-content: center;
+    align-items: center;
+    gap: 6px;
+    padding: 11px 14px;
+    border: 1px solid var(--border);
+    background: var(--accent2);
+    color: #03141c;
+    font-weight: 700;
+    letter-spacing: 1px;
+    cursor: pointer;
+    transition: transform 0.08s ease, box-shadow 0.1s ease;
+  }
+  .btn:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(11,196,227,0.25); }
+  .btn-secondary { background: transparent; color: var(--text); }
+
+  .status-banner {
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    background: #0c1018;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .status-ok    { border-color: rgba(56,217,120,0.4); color: var(--green); }
+  .status-error { border-color: rgba(232,64,87,0.4); color: var(--red); }
+
+  /* ── Header ── */
+  header {
+    border-bottom: 1px solid var(--border);
+    padding: 20px 0;
+    position: sticky;
+    top: 0;
+    background: rgba(8,10,15,0.92);
+    backdrop-filter: blur(12px);
+    z-index: 100;
+  }
+
+  .header-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .logo {
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: 6px;
+    text-transform: uppercase;
+    color: var(--accent);
+    text-shadow: 0 0 30px rgba(200,155,60,0.4);
+  }
+
+  .logo span { color: var(--text); }
+
+  .status-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 10px var(--green);
+    animation: pulse 2s infinite;
+    display: inline-block;
+    margin-right: 8px;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  .status-text { font-family: 'Share Tech Mono', monospace; font-size: 12px; color: var(--muted); }
+
+  /* ── Rank Banner ── */
+  .rank-banner {
+    margin: 32px 0 24px;
+    padding: 24px 32px;
+    background: linear-gradient(135deg, rgba(200,155,60,0.08) 0%, rgba(13,17,23,0.9) 60%);
+    border: 1px solid rgba(200,155,60,0.25);
+    border-left: 4px solid var(--accent);
+    display: flex;
+    align-items: center;
+    gap: 32px;
+    position: relative;
+    overflow: hidden;
+    opacity: 0;
+    transform: translateY(16px);
+    animation: fadeUp 0.5s ease forwards 0.1s;
+  }
+
+  .rank-banner::after {
+    content: '';
+    position: absolute;
+    right: -60px; top: -60px;
+    width: 200px; height: 200px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(200,155,60,0.06) 0%, transparent 70%);
+  }
+
+  .rank-tier {
+    font-size: 52px;
+    font-weight: 700;
+    line-height: 1;
+    color: var(--accent);
+    text-shadow: 0 0 40px rgba(200,155,60,0.5);
+    letter-spacing: 2px;
+  }
+
+  .rank-divider { width: 1px; height: 60px; background: var(--border); }
+
+  .rank-info { flex: 1; }
+  .rank-queue { font-size: 11px; letter-spacing: 3px; color: var(--muted); text-transform: uppercase; margin-bottom: 4px; }
+  .rank-lp { font-size: 22px; font-weight: 600; color: var(--text); }
+  .rank-lp span { color: var(--accent); }
+
+  .rank-record { font-family: 'Share Tech Mono', monospace; font-size: 13px; color: var(--muted); margin-top: 4px; }
+
+  .badge {
+    padding: 4px 10px;
+    border-radius: 2px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+  }
+  .badge-hot { background: rgba(232,64,87,0.15); color: var(--red); border: 1px solid rgba(232,64,87,0.3); }
+  .badge-vet { background: rgba(200,155,60,0.15); color: var(--accent); border: 1px solid rgba(200,155,60,0.3); }
+
+  /* ── Stat Cards ── */
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    margin-bottom: 32px;
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 20px 24px;
+    position: relative;
+    overflow: hidden;
+    opacity: 0;
+    transform: translateY(20px);
+    animation: fadeUp 0.5s ease forwards;
+  }
+
+  .card:nth-child(1) { animation-delay: 0.15s; }
+  .card:nth-child(2) { animation-delay: 0.2s; }
+  .card:nth-child(3) { animation-delay: 0.25s; }
+  .card:nth-child(4) { animation-delay: 0.3s; }
+
+  .card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+  }
+  .card-gold::before  { background: var(--accent); }
+  .card-blue::before  { background: var(--accent2); }
+  .card-green::before { background: var(--green); }
+  .card-red::before   { background: var(--red); }
+
+  .card-label {
+    font-size: 11px;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 10px;
+  }
+
+  .card-value {
+    font-size: 40px;
+    font-weight: 700;
+    line-height: 1;
+    color: var(--text);
+  }
+
+  .card-value.accent  { color: var(--accent); }
+  .card-value.green   { color: var(--green); }
+  .card-sub {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 6px;
+  }
+
+  /* Win rate bar */
+  .wr-bar-bg {
+    height: 4px;
+    background: var(--border);
+    margin-top: 12px;
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .wr-bar-fill {
+    height: 100%;
+    background: var(--green);
+    border-radius: 2px;
+    transition: width 1s ease;
+    width: 0;
+  }
+
+  @keyframes fadeUp {
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  /* ── Two Column Layout ── */
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1.4fr;
+    gap: 24px;
+    margin-bottom: 32px;
+  }
+
+  /* ── Section ── */
+  .section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    opacity: 0;
+    animation: fadeUp 0.5s ease forwards 0.4s;
+  }
+
+  .section-header {
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .section-title {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  /* ── Champion Table ── */
+  .champ-table { width: 100%; }
+
+  .champ-row {
+    display: grid;
+    grid-template-columns: 36px 1fr 60px 80px 80px;
+    padding: 12px 24px;
+    border-bottom: 1px solid rgba(28,35,51,0.6);
+    align-items: center;
+    gap: 8px;
+    transition: background 0.15s;
+  }
+  .champ-row:hover { background: rgba(200,155,60,0.04); }
+  .champ-row:last-child { border-bottom: none; }
+
+  .champ-rank { font-family: 'Share Tech Mono', monospace; font-size: 11px; color: var(--muted); }
+  .champ-name { font-size: 15px; font-weight: 600; color: var(--text); }
+  .champ-games { font-family: 'Share Tech Mono', monospace; font-size: 12px; color: var(--muted); text-align: center; }
+
+  .wr-pill {
+    text-align: center;
+    padding: 3px 8px;
+    border-radius: 2px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .wr-high { background: rgba(56,217,120,0.12); color: var(--green); }
+  .wr-mid  { background: rgba(200,155,60,0.12); color: var(--accent); }
+  .wr-low  { background: rgba(232,64,87,0.12);  color: var(--red); }
+
+  .kda-val { font-family: 'Share Tech Mono', monospace; font-size: 12px; color: var(--text); text-align: center; }
+
+  /* ── Recent Matches ── */
+  .match-row {
+    display: grid;
+    grid-template-columns: 80px 1fr 80px 100px 60px;
+    padding: 12px 24px;
+    border-bottom: 1px solid rgba(28,35,51,0.6);
+    align-items: center;
+    gap: 8px;
+    transition: background 0.15s;
+  }
+  .match-row:hover { background: rgba(11,196,227,0.03); }
+  .match-row:last-child { border-bottom: none; }
+
+  .match-result {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    padding: 4px 10px;
+    border-radius: 2px;
+    text-align: center;
+  }
+  .win-pill  { background: rgba(56,217,120,0.12); color: var(--green); border: 1px solid rgba(56,217,120,0.2); }
+  .loss-pill { background: rgba(232,64,87,0.12);  color: var(--red);   border: 1px solid rgba(232,64,87,0.2); }
+
+  .match-champ { font-size: 15px; font-weight: 600; }
+  .match-kda   { font-family: 'Share Tech Mono', monospace; font-size: 13px; text-align: center; }
+  .match-kda .k { color: var(--green); }
+  .match-kda .d { color: var(--red); }
+  .match-kda .a { color: var(--accent2); }
+  .match-cs    { font-family: 'Share Tech Mono', monospace; font-size: 12px; color: var(--muted); text-align: center; }
+  .match-dur   { font-family: 'Share Tech Mono', monospace; font-size: 12px; color: var(--muted); text-align: right; }
+
+  /* ── Gold Timeline Chart ── */
+  .chart-wrap {
+    padding: 24px;
+    height: 220px;
+    position: relative;
+  }
+
+  canvas { width: 100% !important; }
+
+  /* ── Loading ── */
+  .loading {
+    padding: 40px;
+    text-align: center;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 13px;
+    color: var(--muted);
+  }
+
+  .loading::after {
+    content: '';
+    display: inline-block;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    margin-left: 8px;
+    animation: blink 1s infinite;
+  }
+
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0; }
+  }
+
+  /* ── Footer ── */
+  footer {
+    border-top: 1px solid var(--border);
+    padding: 20px 0;
+    margin-top: 40px;
+    text-align: center;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+    letter-spacing: 2px;
+  }
+
+  @media (max-width: 900px) {
+    .cards { grid-template-columns: repeat(2, 1fr); }
+    .two-col { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="container">
+    <div class="header-inner">
+      <div class="logo">AMADE<span>US</span></div>
+      <div>
+        <span class="status-dot"></span>
+        <span class="status-text">ANALYSIS ENGINE ONLINE</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<main>
+  <div class="container">
+
+
+    <!-- Control Panel -->
+    <div class="control-panel">
+      <div>
+        <h2>Run New Analysis</h2>
+        <form id="runForm" class="run-form">
+          <div class="form-field">
+            <label for="gameName">Summoner</label>
+            <input id="gameName" name="game_name" placeholder="e.g. Zai" required>
+          </div>
+          <div class="form-field">
+            <label for="tagLine">Tag</label>
+            <input id="tagLine" name="tag_line" placeholder="e.g. Wins" required>
+          </div>
+          <div class="form-field">
+            <label for="matchCount">Matches</label>
+            <select id="matchCount" name="match_count">
+              <option value="10">10</option>
+              <option value="20" selected>20</option>
+              <option value="30">30</option>
+              <option value="40">40</option>
+              <option value="50">50</option>
+            </select>
+          </div>
+          <button type="submit" class="btn">Run Analysis</button>
+        </form>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:10px;align-items:flex-start;">
+        <div class="status-banner" id="runStatus">Awaiting input</div>
+        <button type="button" class="btn btn-secondary" id="refreshBtn">Refresh Dashboard</button>
+      </div>
+    </div>
+    <!-- Rank Banner -->
+    <div class="rank-banner" id="rankBanner">
+      <div class="loading">Loading rank data</div>
+    </div>
+
+    <!-- Summary Cards -->
+    <div class="cards" id="summaryCards">
+      <div class="card card-gold"><div class="loading">—</div></div>
+      <div class="card card-green"><div class="loading">—</div></div>
+      <div class="card card-blue"><div class="loading">—</div></div>
+      <div class="card card-red"><div class="loading">—</div></div>
+    </div>
+
+    <!-- Two Column -->
+    <div class="two-col">
+
+      <!-- Champions -->
+      <div class="section">
+        <div class="section-header">
+          <span class="section-title">Champion Performance</span>
+        </div>
+        <div id="champTable"><div class="loading">Loading champions</div></div>
+      </div>
+
+      <!-- Recent Matches + Gold Chart -->
+      <div style="display:flex;flex-direction:column;gap:24px;">
+
+        <div class="section" style="animation-delay:0.5s">
+          <div class="section-header">
+            <span class="section-title">Recent Matches</span>
+          </div>
+          <div id="recentMatches"><div class="loading">Loading matches</div></div>
+        </div>
+
+        <div class="section" style="animation-delay:0.6s">
+          <div class="section-header">
+            <span class="section-title">Avg Gold / Minute</span>
+          </div>
+          <div class="chart-wrap">
+            <canvas id="goldChart"></canvas>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+</main>
+
+<footer>
+  <div class="container">AMADEUS · LEAGUE ANALYTICS · <span id="footerTime"></span></div>
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<script>
+  const API = 'http://localhost:5000/api';
+  let goldChartInstance = null;
+
+  // ── Utilities ────────────────────────────────────────────────────────────
+
+  function fmt(n) { return n == null ? '—' : n; }
+
+  function wrClass(wr) {
+    if (wr >= 55) return 'wr-high';
+    if (wr >= 45) return 'wr-mid';
+    return 'wr-low';
+  }
+
+  function secToMin(s) {
+    const m = Math.floor(s / 60);
+    const sec = String(s % 60).padStart(2, '0');
+    return `${m}:${sec}`;
+  }
+
+  // ── Rank Banner ──────────────────────────────────────────────────────────
+
+  
+  const statusEl = document.getElementById('runStatus');
+
+  function setStatus(msg, state = 'ok') {
+    if (!statusEl) return;
+    statusEl.textContent = msg;
+    statusEl.className = 'status-banner' + (state === 'error' ? ' status-error' : ' status-ok');
+  }
+
+  function loadAll() {
+    return Promise.all([loadRank(), loadSummary(), loadChampions(), loadRecent(), loadGoldChart()]);
+  }
+
+  async function loadRank() {
+    const data = await fetch(`${API}/rank`).then(r => r.json()).catch(() => []);
+    const el   = document.getElementById('rankBanner');
+
+    if (!data.length) { el.innerHTML = '<div style="color:var(--muted);font-family:Share Tech Mono,monospace;font-size:13px;">No ranked data found.</div>'; return; }
+
+    const e = data[0];
+    const badges = [];
+    if (e.hot_streak)  badges.push('<span class="badge badge-hot">🔥 Hot Streak</span>');
+    if (e.veteran)     badges.push('<span class="badge badge-vet">★ Veteran</span>');
+    if (e.fresh_blood) badges.push('<span class="badge badge-vet">⚡ Fresh Blood</span>');
+
+    el.innerHTML = `
+      <div class="rank-tier">${e.tier || '—'}</div>
+      <div class="rank-divider"></div>
+      <div class="rank-info">
+        <div class="rank-queue">${(e.queue || '').replace(/_/g, ' ')}</div>
+        <div class="rank-lp">${e.tier} ${e.rank} · <span>${e.lp} LP</span></div>
+        <div class="rank-record">${e.wins}W / ${e.losses}L · ${e.win_rate}% WR</div>
+        <div style="margin-top:10px;display:flex;gap:8px;">${badges.join('')}</div>
+      </div>
+    `;
+  }
+
+  // ── Summary Cards ────────────────────────────────────────────────────────
+
+  async function loadSummary() {
+    const d  = await fetch(`${API}/summary`).then(r => r.json()).catch(() => null);
+    const el = document.getElementById('summaryCards');
+    if (!d) return;
+
+    el.innerHTML = `
+      <div class="card card-gold">
+        <div class="card-label">Total Games</div>
+        <div class="card-value accent">${d.total_games}</div>
+        <div class="card-sub">${d.wins}W · ${d.losses}L</div>
+        <div class="wr-bar-bg"><div class="wr-bar-fill" id="wrBar"></div></div>
+      </div>
+      <div class="card card-green">
+        <div class="card-label">Win Rate</div>
+        <div class="card-value green">${d.win_rate}%</div>
+        <div class="card-sub">across all matches</div>
+      </div>
+      <div class="card card-blue">
+        <div class="card-label">Avg KDA</div>
+        <div class="card-value">${d.avg_kda}</div>
+        <div class="card-sub">${d.avg_kills} / ${d.avg_deaths} / ${d.avg_assists}</div>
+      </div>
+      <div class="card card-red">
+        <div class="card-label">Avg Kills</div>
+        <div class="card-value">${d.avg_kills}</div>
+        <div class="card-sub">${d.avg_assists} avg assists</div>
+      </div>
+    `;
+
+    setTimeout(() => {
+      const bar = document.getElementById('wrBar');
+      if (bar) bar.style.width = `${d.win_rate}%`;
+    }, 200);
+  }
+
+  // ── Champion Table ───────────────────────────────────────────────────────
+
+  async function loadChampions() {
+    const data = await fetch(`${API}/champions`).then(r => r.json()).catch(() => []);
+    const el   = document.getElementById('champTable');
+
+    if (!data.length) { el.innerHTML = '<div class="loading">No champion data</div>'; return; }
+
+    const rows = data.slice(0, 8).map((c, i) => `
+      <div class="champ-row">
+        <div class="champ-rank">#${i+1}</div>
+        <div class="champ-name">${c.champion}</div>
+        <div class="champ-games">${c.games}g</div>
+        <div class="wr-pill ${wrClass(c.win_rate)}">${c.win_rate}%</div>
+        <div class="kda-val">${c.kda} KDA</div>
+      </div>
+    `).join('');
+
+    el.innerHTML = rows;
+  }
+
+  // ── Recent Matches ───────────────────────────────────────────────────────
+
+  async function loadRecent() {
+    const data = await fetch(`${API}/recent`).then(r => r.json()).catch(() => []);
+    const el   = document.getElementById('recentMatches');
+
+    if (!data.length) { el.innerHTML = '<div class="loading">No match data</div>'; return; }
+
+    const rows = data.map(m => `
+      <div class="match-row">
+        <div class="match-result ${m.win ? 'win-pill' : 'loss-pill'}">${m.win ? 'WIN' : 'LOSS'}</div>
+        <div class="match-champ">${m.champion}</div>
+        <div class="match-kda">
+          <span class="k">${m.kills}</span> /
+          <span class="d">${m.deaths}</span> /
+          <span class="a">${m.assists}</span>
+        </div>
+        <div class="match-cs">${m.cs} CS</div>
+        <div class="match-dur">${secToMin(m.game_duration)}</div>
+      </div>
+    `).join('');
+
+    el.innerHTML = rows;
+  }
+
+  // ── Gold Chart ───────────────────────────────────────────────────────────
+
+  async function loadGoldChart() {
+    const data = await fetch(`${API}/gold_timeline`).then(r => r.json()).catch(() => []);
+    if (!data.length) return;
+
+    const ctx = document.getElementById('goldChart').getContext('2d');
+    if (goldChartInstance) goldChartInstance.destroy();
+
+    goldChartInstance = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: data.map(d => `${d.minute}m`),
+        datasets: [{
+          label: 'Avg Gold',
+          data: data.map(d => d.avg_gold),
+          borderColor: '#c89b3c',
+          backgroundColor: 'rgba(200,155,60,0.06)',
+          borderWidth: 2,
+          pointRadius: 0,
+          pointHoverRadius: 4,
+          fill: true,
+          tension: 0.4,
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#4a5568', font: { family: 'Share Tech Mono', size: 10 } } },
+          y: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#4a5568', font: { family: 'Share Tech Mono', size: 10 }, callback: v => `${(v/1000).toFixed(1)}k` } }
+        }
+      }
+    });
+  }
+
+
+  // Controls
+  const runForm = document.getElementById('runForm');
+  const refreshBtn = document.getElementById('refreshBtn');
+
+  if (runForm) {
+    runForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const gameName = document.getElementById('gameName').value.trim();
+      const tagLine  = document.getElementById('tagLine').value.trim();
+      const matchCount = document.getElementById('matchCount').value;
+
+      if (!gameName || !tagLine) {
+        setStatus('Summoner and tag are required.', 'error');
+        return;
+      }
+
+      setStatus('Starting pipeline...', 'ok');
+      try {
+        const res = await fetch(`${API}/run`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ game_name: gameName, tag_line: tagLine, match_count: matchCount })
+        });
+        const payload = await res.json().catch(() => ({}));
+        if (!res.ok || payload.error) {
+          setStatus(payload.error || 'Request failed.', 'error');
+          return;
+        }
+        setStatus(`Started for ${payload.game_name}#${payload.tag_line}. Auto-refresh in 60s.`, 'ok');
+        setTimeout(() => {
+          loadAll()
+            .then(() => setStatus('Dashboard refreshed after run.', 'ok'))
+            .catch(() => setStatus('Refresh failed; try again.', 'error'));
+        }, 60000);
+      } catch (err) {
+        setStatus('Request failed.', 'error');
+      }
+    });
+  }
+
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', () => {
+      setStatus('Refreshing dashboard...', 'ok');
+      loadAll()
+        .then(() => setStatus('Dashboard refreshed.', 'ok'))
+        .catch(() => setStatus('Refresh failed.', 'error'));
+    });
+  }
+
+  // ── Footer Clock ─────────────────────────────────────────────────────────
+
+  function updateClock() {
+    document.getElementById('footerTime').textContent = new Date().toLocaleTimeString();
+  }
+  setInterval(updateClock, 1000);
+  updateClock();
+
+  // ── Boot ─────────────────────────────────────────────────────────────────
+
+  loadAll();
+</script>
+</body>
+</html>
