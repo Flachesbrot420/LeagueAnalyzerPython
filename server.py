@@ -4,6 +4,7 @@ from sqlalchemy import create_engine, func
 from sqlalchemy.orm import sessionmaker
 import os
 import sys
+import time
 from threading import Thread
 from dotenv import load_dotenv
 
@@ -34,10 +35,32 @@ Session = sessionmaker(bind=engine)
 def get_session():
     return Session()
 
+RUN_STATUS = {
+    "status": "idle",
+    "start_ts": None,
+    "end_ts": None,
+    "error": None,
+    "matches_requested": 0,
+    "matches_new": 0,
+    "game_name": None,
+    "tag_line": None,
+    "clear_db": None
+}
+
 def get_tracked_puuid(db):
     """Return the most recently stored account puuid (the one pipeline fetched)."""
     account = db.query(AccountDto).order_by(AccountDto.id.desc()).first()
     return account.puuid if account else None
+
+def get_tracked_summoner_id(db, puuid: str):
+    """Grab the most recent summonerId for the tracked puuid from participants."""
+    participant = (
+        db.query(ParticipantDto.summonerId)
+        .filter(ParticipantDto.puuid == puuid, ParticipantDto.summonerId != None)
+        .order_by(ParticipantDto.id.desc())
+        .first()
+    )
+    return participant[0] if participant else None
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
@@ -228,8 +251,20 @@ def run_pipeline():
     payload = request.get_json(force=True, silent=True) or {}
     game_name   = (payload.get("game_name") or "").strip()
     tag_line    = (payload.get("tag_line") or "").strip()
-    match_count = payload.get("match_count", 20)
+    # default match count from env or 20
+    env_default_mc = os.getenv("AMADEUS_MATCH_COUNT_DEFAULT")
+    try:
+        env_default_mc = int(env_default_mc) if env_default_mc is not None else 20
+    except ValueError:
+        env_default_mc = 20
+    match_count = payload.get("match_count", env_default_mc)
+
     clear_db    = payload.get("clear_db", None)
+    rate_limit_env = os.getenv("AMADEUS_RATE_LIMIT_SLEEP", "1.5")
+    try:
+        rate_limit_sleep = float(rate_limit_env)
+    except ValueError:
+        rate_limit_sleep = 1.5
 
     try:
         match_count = max(1, min(50, int(match_count)))
@@ -256,20 +291,87 @@ def run_pipeline():
         try:
             api = RiotApiClient(api_key=api_key)
             db  = DatabaseManager(db_url=DB_URL, clear_on_init=clear_flag)
-            pipeline = AmadeusPipeline(api_client=api, db_manager=db)
-            pipeline.run(game_name=game_name, tag_line=tag_line, match_count=match_count)
+            pipeline = AmadeusPipeline(api_client=api, db_manager=db, rate_limit_sleep=rate_limit_sleep)
+            stats = pipeline.run(game_name=game_name, tag_line=tag_line, match_count=match_count)
+            RUN_STATUS.update({
+                "status": "success",
+                "end_ts": time.time(),
+                "matches_requested": stats.get("matches_requested", 0),
+                "matches_new": stats.get("matches_new", 0),
+                "error": None
+            })
             print(f"[run] Completed pipeline for {game_name}#{tag_line}")
         except Exception as exc:
             print(f"[run] Pipeline failed: {exc}", file=sys.stderr)
+            RUN_STATUS.update({
+                "status": "error",
+                "end_ts": time.time(),
+                "error": str(exc)
+            })
 
+    RUN_STATUS.update({
+        "status": "running",
+        "start_ts": time.time(),
+        "end_ts": None,
+        "error": None,
+        "matches_requested": 0,
+        "matches_new": 0,
+        "game_name": game_name,
+        "tag_line": tag_line,
+        "clear_db": bool(clear_flag) if clear_flag is not None else None
+    })
     Thread(target=task, daemon=True).start()
     return jsonify({
         "status": "started",
         "game_name": game_name,
         "tag_line": tag_line,
         "match_count": match_count,
-        "clear_db": bool(clear_flag) if clear_flag is not None else None
+        "clear_db": bool(clear_flag) if clear_flag is not None else None,
+        "rate_limit_sleep": rate_limit_sleep
     })
+
+@app.route('/api/run/status')
+def run_status():
+    """Return last pipeline run status."""
+    return jsonify(RUN_STATUS)
+
+@app.route('/api/active_game')
+def active_game():
+    """Check if tracked player is currently in an active game (Spectator API)."""
+    api_key = os.getenv("RIOT_API_KEY")
+    if not api_key:
+        return jsonify({"error": "RIOT_API_KEY missing on server"}), 500
+
+    db = get_session()
+    try:
+        puuid = get_tracked_puuid(db)
+        if not puuid:
+            return jsonify({"error": "No tracked account found"}), 404
+        summoner_id = get_tracked_summoner_id(db, puuid)
+        if not summoner_id:
+            return jsonify({"error": "No summonerId available for tracked account"}), 404
+
+        api = RiotApiClient(api_key=api_key)
+        try:
+            game = api.get_active_game(summoner_id)
+        except Exception as exc:
+            # 404 from spectator means not in game
+            if "404" in str(exc):
+                return jsonify({"active": False})
+            # propagate other errors
+            return jsonify({"error": str(exc)}), 500
+
+        # If no exception, player is in an active game
+        return jsonify({
+            "active": True,
+            "game_mode": game.get("gameMode"),
+            "game_type": game.get("gameType"),
+            "game_start": game.get("gameStartTime"),
+            "map_id": game.get("mapId"),
+            "queue_id": game.get("gameQueueConfigId")
+        })
+    finally:
+        db.close()
 
 
 if __name__ == '__main__':

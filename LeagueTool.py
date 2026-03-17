@@ -3,7 +3,7 @@ import os
 import requests
 from pathlib import Path
 from dotenv import load_dotenv
-from sqlalchemy import create_engine, Column, Integer, String, ForeignKey, BigInteger, JSON, Boolean
+from sqlalchemy import create_engine, Column, Integer, String, ForeignKey, BigInteger, JSON, Boolean, Index
 from sqlalchemy.orm import sessionmaker, declarative_base, relationship
 
 load_dotenv(dotenv_path=Path(__file__).parent / ".env")
@@ -32,6 +32,7 @@ class MatchMetadataDto(Base):
 
 class MatchInfoDto(Base):
     __tablename__ = 'match_info'
+    __table_args__ = (Index('idx_match_info_gameCreation', 'gameCreation'),)
     id                 = Column(Integer, primary_key=True, autoincrement=True)
     endOfGameResult    = Column(String)
     gameCreation       = Column(BigInteger)
@@ -52,6 +53,7 @@ class MatchInfoDto(Base):
 
 class ParticipantDto(Base):
     __tablename__ = 'match_participant'
+    __table_args__ = (Index('idx_match_participant_puuid', 'puuid'),)
     id                             = Column(Integer, primary_key=True, autoincrement=True)
     info_id                        = Column(Integer, ForeignKey('match_info.id'))
     allInPings                     = Column(Integer)
@@ -261,6 +263,7 @@ class ParticipantTimeLineDto(Base):
 
 class FramesTimeLineDto(Base):
     __tablename__ = 'frames_timeline'
+    __table_args__ = (Index('idx_frames_info_id', 'info_id'),)
     id        = Column(Integer, primary_key=True, autoincrement=True)
     info_id   = Column(Integer, ForeignKey('info_timeline.id'))
     timestamp = Column(Integer)
@@ -416,6 +419,9 @@ class RiotApiClient:
 
     def get_league_entries(self, puuid: str) -> list:
         return self._get(f"{self.region_url}/lol/league/v4/entries/by-puuid/{puuid}")
+
+    def get_active_game(self, summoner_id: str) -> dict:
+        return self._get(f"{self.region_url}/lol/spectator/v4/active-games/by-summoner/{summoner_id}")
 
 
 # ── Database Manager ──────────────────────────────────────────────────────────
@@ -712,6 +718,7 @@ class AmadeusPipeline:
 
     def run(self, game_name: str, tag_line: str, match_count: int = 20):
         print(f"\n[Amadeus] Starting pipeline for {game_name}#{tag_line}\n")
+        stats_new_matches = 0
 
         account_data = self.api.get_account(game_name, tag_line)
         account      = self.db.save_account(account_data)
@@ -731,6 +738,7 @@ class AmadeusPipeline:
 
             if need_match:
                 self.db.save_match(match_id, self.api.get_match(match_id))
+                stats_new_matches += 1
             if need_timeline:
                 self.db.save_timeline(match_id, self.api.get_match_timeline(match_id))
 
@@ -739,6 +747,10 @@ class AmadeusPipeline:
         self.db.save_league_entries(self.api.get_league_entries(puuid))
 
         print("\n[Amadeus] ✓ Pipeline complete!")
+        return {
+            "matches_requested": len(match_ids),
+            "matches_new": stats_new_matches
+        }
 
 
 # ── Entry Point ───────────────────────────────────────────────────────────────
@@ -749,9 +761,11 @@ if __name__ == "__main__":
     GAME_NAME = "Zai"
     TAG_LINE  = "Wins"
     CLEAR_DB  = os.getenv("AMADEUS_CLEAR_DB", "false").lower() in ("1", "true", "yes", "y")
+    RATE_LIMIT = float(os.getenv("AMADEUS_RATE_LIMIT_SLEEP", "1.5"))
+    MATCH_COUNT = int(os.getenv("AMADEUS_MATCH_COUNT_DEFAULT", "20"))
 
     api = RiotApiClient(api_key=API_KEY)
     db  = DatabaseManager(db_url=DB_URL, clear_on_init=CLEAR_DB)
 
     pipeline = AmadeusPipeline(api_client=api, db_manager=db)
-    pipeline.run(game_name=GAME_NAME, tag_line=TAG_LINE)
+    pipeline.run(game_name=GAME_NAME, tag_line=TAG_LINE, match_count=MATCH_COUNT)

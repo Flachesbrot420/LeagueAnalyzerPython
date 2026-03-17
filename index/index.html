@@ -112,6 +112,7 @@
   }
   .status-ok    { border-color: rgba(56,217,120,0.4); color: var(--green); }
   .status-error { border-color: rgba(232,64,87,0.4); color: var(--red); }
+  .status-running { border-color: rgba(200,155,60,0.4); color: var(--accent); }
 
   /* ── Header ── */
   header {
@@ -174,6 +175,10 @@
     transform: translateY(16px);
     animation: fadeUp 0.5s ease forwards 0.1s;
   }
+  .rank-banner.live {
+    box-shadow: 0 0 20px rgba(11,196,227,0.35), 0 0 50px rgba(11,196,227,0.2);
+    border-color: rgba(11,196,227,0.5);
+  }
 
   .rank-banner::after {
     content: '';
@@ -201,6 +206,32 @@
   .rank-lp span { color: var(--accent); }
 
   .rank-record { font-family: 'Share Tech Mono', monospace; font-size: 13px; color: var(--muted); margin-top: 4px; }
+
+  .live-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    border-radius: 2px;
+    background: rgba(11,196,227,0.15);
+    border: 1px solid rgba(11,196,227,0.5);
+    color: var(--accent2);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+  .inactive-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 6px 10px;
+    border-radius: 2px;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 12px;
+    text-transform: uppercase;
+  }
 
   .badge {
     padding: 4px 10px;
@@ -484,11 +515,12 @@
           </div>
           <button type="submit" class="btn">Run Analysis</button>
         </form>
-      </div>
-      <div style="display:flex;flex-direction:column;gap:10px;align-items:flex-start;">
+    </div>
+    <div style="display:flex;flex-direction:column;gap:10px;align-items:flex-start;">
         <div class="status-banner" id="runStatus">Awaiting input</div>
         <button type="button" class="btn btn-secondary" id="refreshBtn">Refresh Dashboard</button>
-      </div>
+        <div class="status-banner" id="runStatusMeta" style="font-size:11px;"></div>
+    </div>
     </div>
     <!-- Rank Banner -->
     <div class="rank-banner" id="rankBanner">
@@ -568,15 +600,67 @@
 
   
   const statusEl = document.getElementById('runStatus');
+  const statusMetaEl = document.getElementById('runStatusMeta');
 
   function setStatus(msg, state = 'ok') {
     if (!statusEl) return;
     statusEl.textContent = msg;
-    statusEl.className = 'status-banner' + (state === 'error' ? ' status-error' : ' status-ok');
+    statusEl.className = 'status-banner' +
+      (state === 'error' ? ' status-error' :
+       state === 'running' ? ' status-running' : ' status-ok');
+  }
+
+  async function loadRunStatus() {
+    try {
+      const data = await fetch(`${API}/run/status`).then(r => r.json());
+      if (data.status === 'running') {
+        setStatus('Pipeline running...', 'running');
+      } else if (data.status === 'error') {
+        setStatus(`Pipeline failed: ${data.error || 'unknown'}`, 'error');
+      } else if (data.status === 'success') {
+        setStatus('Last run succeeded', 'ok');
+      }
+      if (statusMetaEl) {
+        const start = data.start_ts ? new Date(data.start_ts * 1000).toLocaleTimeString() : '—';
+        const end   = data.end_ts   ? new Date(data.end_ts   * 1000).toLocaleTimeString() : '—';
+        statusMetaEl.textContent = `Start: ${start} · End: ${end} · Requested: ${data.matches_requested || 0} · New: ${data.matches_new || 0}`;
+      }
+    } catch (e) {
+      // ignore
+    }
   }
 
   function loadAll() {
-    return Promise.all([loadRank(), loadSummary(), loadChampions(), loadRecent(), loadGoldChart()]);
+    return Promise.all([loadRank(), loadSummary(), loadChampions(), loadRecent(), loadGoldChart(), loadActiveGame()]);
+  }
+
+
+  async function loadActiveGame() {
+    const box = document.getElementById('activeGameBox');
+    const banner = document.getElementById('rankBanner');
+    if (!box) return;
+    box.innerHTML = '';
+    if (banner) banner.classList.remove('live');
+
+    const data = await fetch(`${API}/active_game`).then(r => r.json()).catch(() => ({ error: 'Network error' }));
+    if (data.error) {
+      box.innerHTML = `<div class="inactive-pill" style="color:var(--red);">${data.error}</div>`;
+      return;
+    }
+    if (!data.active) {
+      box.innerHTML = '';
+      return;
+    }
+
+    const start = data.game_start ? new Date(data.game_start).toLocaleTimeString() : 'Live';
+    box.innerHTML = `
+      <div class="live-pill">Live Game</div>
+      <div style="font-family:'Share Tech Mono', monospace;font-size:12px;color:var(--muted);margin-top:6px;">
+        ${data.game_mode || 'Mode'} · Q${data.queue_id || '?'}<br>
+        Started: ${start}
+      </div>
+    `;
+    if (banner) banner.classList.add('live');
   }
 
   async function loadRank() {
@@ -600,6 +684,7 @@
         <div class="rank-record">${e.wins}W / ${e.losses}L · ${e.win_rate}% WR</div>
         <div style="margin-top:10px;display:flex;gap:8px;">${badges.join('')}</div>
       </div>
+      <div id="activeGameBox" style="min-width:180px;"></div>
     `;
   }
 
@@ -773,6 +858,10 @@
     });
   }
 
+  // Poll status every 10s
+  setInterval(loadRunStatus, 10000);
+  loadRunStatus();
+
   // ── Footer Clock ─────────────────────────────────────────────────────────
 
   function updateClock() {
@@ -784,6 +873,7 @@
   // ── Boot ─────────────────────────────────────────────────────────────────
 
   loadAll();
+  loadActiveGame();
 </script>
 </body>
 </html>
