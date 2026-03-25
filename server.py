@@ -172,6 +172,8 @@ def recent():
                 "vision_score":  target.visionScore,
                 "game_duration": info.gameDuration,
                 "game_mode":     info.gameMode,
+                "map_id":        info.mapId,
+                "queue_id":      info.queueId,
             })
         return jsonify(result)
     finally:
