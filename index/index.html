@@ -413,7 +413,9 @@
   .win-pill  { background: rgba(56,217,120,0.12); color: var(--green); border: 1px solid rgba(56,217,120,0.2); }
   .loss-pill { background: rgba(232,64,87,0.12);  color: var(--red);   border: 1px solid rgba(232,64,87,0.2); }
 
+  .match-champ-wrap { display: flex; flex-direction: column; gap: 4px; }
   .match-champ { font-size: 15px; font-weight: 600; }
+  .match-meta { font-family: 'Share Tech Mono', monospace; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
   .match-kda   { font-family: 'Share Tech Mono', monospace; font-size: 13px; text-align: center; }
   .match-kda .k { color: var(--green); }
   .match-kda .d { color: var(--red); }
@@ -596,6 +598,36 @@
     return `${m}:${sec}`;
   }
 
+  function createaMapObject() {
+    return {
+      maps: {
+        11: "Summoner's Rift",
+        12: "Howling Abyss",
+        21: "Nexus Blitz",
+        30: "Arena"
+      },
+      queues: {
+        400: 'Normal Draft',
+        420: 'Ranked Solo/Duo',
+        430: 'Normal Blind',
+        440: 'Ranked Flex',
+        450: 'ARAM',
+        700: 'Clash',
+        1700: 'Arena'
+      }
+    };
+  }
+
+  const mapObject = createaMapObject();
+
+  function getMapLabel(mapId) {
+    return mapObject.maps[mapId] || `Map ${mapId ?? '—'}`;
+  }
+
+  function getQueueLabel(queueId) {
+    return mapObject.queues[queueId] || `Queue ${queueId ?? '—'}`;
+  }
+
   // ── Rank Banner ──────────────────────────────────────────────────────────
 
   
@@ -656,8 +688,8 @@
     box.innerHTML = `
       <div class="live-pill">Live Game</div>
       <div style="font-family:'Share Tech Mono', monospace;font-size:12px;color:var(--muted);margin-top:6px;">
-        ${data.game_mode || 'Mode'} · Q${data.queue_id || '?'}<br>
-        Started: ${start}
+        ${data.game_mode || 'Mode'} · ${getQueueLabel(data.queue_id)}<br>
+        ${getMapLabel(data.map_id)} · Started: ${start}
       </div>
     `;
     if (banner) banner.classList.add('live');
@@ -757,7 +789,10 @@
     const rows = data.map(m => `
       <div class="match-row">
         <div class="match-result ${m.win ? 'win-pill' : 'loss-pill'}">${m.win ? 'WIN' : 'LOSS'}</div>
-        <div class="match-champ">${m.champion}</div>
+        <div class="match-champ-wrap">
+          <div class="match-champ">${m.champion}</div>
+          <div class="match-meta">${getQueueLabel(m.queue_id)} · ${getMapLabel(m.map_id)}</div>
+        </div>
         <div class="match-kda">
           <span class="k">${m.kills}</span> /
           <span class="d">${m.deaths}</span> /
